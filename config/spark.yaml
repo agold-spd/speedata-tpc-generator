@@ -1,0 +1,77 @@
+# Spark Configuration for TPC-H Data Generation
+# Adjust these values based on your system resources
+
+# =============================================================================
+# MEMORY SETTINGS
+# =============================================================================
+# Adjust based on your available system memory
+# Rule of thumb: Total should not exceed 80% of system RAM
+
+memory:
+  driver: "8g"              # Driver memory (default: 8g)
+  executor: "12g"           # Executor memory (default: 12g) 
+  driver_max_result: "4g"   # Max result size for driver
+  executor_fraction: 0.8    # Fraction of executor memory for storage/computation
+
+# =============================================================================
+# PERFORMANCE SETTINGS  
+# =============================================================================
+# Adjust based on your CPU cores and workload
+
+performance:
+  shuffle_partitions: 200   # Number of partitions for shuffles (default: 200)
+  default_parallelism: 100  # Default parallelism level (default: 100)
+
+# =============================================================================
+# ADAPTIVE QUERY EXECUTION (AQE)
+# =============================================================================
+# Usually don't need to change these - they provide automatic optimization
+
+adaptive:
+  enabled: true                     # Enable Adaptive Query Execution
+  coalesce_partitions: true         # Enable partition coalescing  
+  min_partition_size: "64MB"        # Minimum partition size
+  advisory_partition_size: "128MB"  # Target partition size
+  skew_join: true                   # Enable skew join optimization
+
+# =============================================================================
+# PARQUET OPTIMIZATIONS
+# =============================================================================
+# Optimizations for reading/writing Parquet files
+
+parquet:
+  batch_size: 8192          # Columnar reader batch size
+  vectorized_reader: true   # Enable vectorized reader for better performance
+
+# =============================================================================
+# ADVANCED SETTINGS
+# =============================================================================
+# Custom Spark configurations - add any additional settings here
+# Format: "spark.config.key": "value"
+
+custom:
+  "spark.serializer": "org.apache.spark.serializer.KryoSerializer"
+  "spark.sql.execution.arrow.pyspark.enabled": "true"
+  "spark.sql.sources.partitionOverwriteMode": "dynamic"
+  "spark.sql.hive.filesourcePartitionFileCacheSize": "262144000"
+
+# =============================================================================
+# SYSTEM-SPECIFIC EXAMPLES
+# =============================================================================
+# Uncomment and modify one of these sections based on your system:
+
+# # For smaller systems (16GB RAM, 8 cores):
+# memory:
+#   driver: "4g"
+#   executor: "8g"
+# performance:
+#   shuffle_partitions: 100
+#   default_parallelism: 50
+
+# # For larger systems (64GB+ RAM, 32+ cores):
+# memory:
+#   driver: "16g" 
+#   executor: "32g"
+# performance:
+#   shuffle_partitions: 400
+#   default_parallelism: 200

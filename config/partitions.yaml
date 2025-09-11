@@ -1,0 +1,36 @@
+# TPC-H Data Generation Partitions Configuration
+# 
+# This file controls how many file parts tpchgen-cli creates for each table
+# during the initial data generation phase. These settings are optimized for 1TB datasets.
+#
+# NOTE: These partition counts only affect file generation, NOT Spark processing.
+#       Spark uses auto-partitioning during the optimization phase.
+
+# =============================================================================
+# PARTITION COUNTS BY TABLE (Optimized for 1TB / Scale Factor 1000)
+# =============================================================================
+
+region: 1        # 15 rows (~1KB) - single file optimal
+nation: 1        # 75 rows (~5KB) - single file optimal  
+supplier: 2      # 30M rows (~400MB) - 2 files for better parallelism
+customer: 8      # 450M rows (~24GB) - 8 files for balanced sizes (~3GB each)
+part: 4          # 600M rows (~24GB) - 4 files for manageable chunks (~6GB each)
+partsupp: 16     # 2.4B rows (~120GB) - 16 files to distribute load (~7.5GB each)
+orders: 16       # 4.5B rows (~170GB) - 16 files for parallel processing (~10GB each)
+lineitem: 32     # 18B rows (~760GB) - 32 files for maximum parallelism (~24GB each)
+
+# =============================================================================
+# SCALING GUIDELINES
+# =============================================================================
+# 
+# For different scale factors, adjust proportionally:
+# 
+# Scale Factor 1 (1GB):     Use 1 partition for all tables
+# Scale Factor 10 (10GB):   Divide above values by 10
+# Scale Factor 100 (100GB): Divide above values by 2-4
+# Scale Factor 1000 (1TB):  Use values above (optimized)
+# 
+# Target file sizes: 1-10GB per file for optimal balance of:
+# - Parallelism during generation
+# - Reasonable file handling
+# - Efficient downstream processing

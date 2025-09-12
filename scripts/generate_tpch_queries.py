@@ -1,350 +1,386 @@
 #!/usr/bin/env python3
-"""Generate TPC-H benchmark queries in standard SQL format.
+"""Generate TPC-H benchmark queries with parameter substitution.
 
-This script generates the standard 22 TPC-H queries with:
-1. Standard SQL format
-2. Substitution parameters for different runs
-3. Multiple query streams for parallel execution
+This script implements the TPC-H parameter substitution logic using the official
+query templates, providing cross-platform compatibility without external tools.
 """
 import argparse
 import os
 import random
-import yaml
+import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Any
 
-# TPC-H Query Templates with substitution parameters
-TPCH_QUERIES = {
+# TPC-H Parameter definitions based on the official specification
+TPCH_PARAMETERS = {
     1: {
         "name": "Pricing Summary Report",
-        "description": "Summary of line items by return flag and line status",
-        "params": ["delta"],
-        "template": """
--- TPC-H Query 1: Pricing Summary Report
--- This query reports the amount of business that was billed, shipped, and returned.
-
-SELECT
-    l_returnflag,
-    l_linestatus,
-    SUM(l_quantity) AS sum_qty,
-    SUM(l_extendedprice) AS sum_base_price,
-    SUM(l_extendedprice * (1 - l_discount)) AS sum_disc_price,
-    SUM(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge,
-    AVG(l_quantity) AS avg_qty,
-    AVG(l_extendedprice) AS avg_price,
-    AVG(l_discount) AS avg_disc,
-    COUNT(*) AS count_order
-FROM lineitem
-WHERE l_shipdate <= DATE '{delta}'
-GROUP BY l_returnflag, l_linestatus
-ORDER BY l_returnflag, l_linestatus;
-"""
+        "params": {
+            1: {"type": "days", "min": 60, "max": 120}  # DELTA days back from 1998-12-01
+        }
     },
     2: {
-        "name": "Minimum Cost Supplier",
-        "description": "Find suppliers with minimum cost for each part/region combination",
-        "params": ["size", "type", "region"],
-        "template": """
--- TPC-H Query 2: Minimum Cost Supplier
--- This query finds which supplier should be selected to place an order for a given part in a given region.
-
-SELECT
-    s_acctbal,
-    s_name,
-    n_name,
-    p_partkey,
-    p_mfgr,
-    s_address,
-    s_phone,
-    s_comment
-FROM
-    part,
-    supplier,
-    partsupp,
-    nation,
-    region
-WHERE
-    p_partkey = ps_partkey
-    AND s_suppkey = ps_suppkey
-    AND p_size = {size}
-    AND p_type LIKE '%{type}'
-    AND s_nationkey = n_nationkey
-    AND n_regionkey = r_regionkey
-    AND r_name = '{region}'
-    AND ps_supplycost = (
-        SELECT MIN(ps_supplycost)
-        FROM partsupp, supplier, nation, region
-        WHERE
-            p_partkey = ps_partkey
-            AND s_suppkey = ps_suppkey
-            AND s_nationkey = n_nationkey
-            AND n_regionkey = r_regionkey
-            AND r_name = '{region}'
-    )
-ORDER BY
-    s_acctbal DESC,
-    n_name,
-    s_name,
-    p_partkey
-LIMIT 100;
-"""
+        "name": "Minimum Cost Supplier", 
+        "params": {
+            1: {"type": "size", "values": [1, 2, 3, 4, 5, 10, 14, 15, 16, 17, 18, 19, 20, 25, 30, 35, 40, 45, 49, 50]},
+            2: {"type": "type", "values": ["BRASS", "COPPER", "NICKEL", "STEEL", "TIN"]},
+            3: {"type": "region", "values": ["AFRICA", "AMERICA", "ASIA", "EUROPE", "MIDDLE EAST"]}
+        }
     },
     3: {
         "name": "Shipping Priority",
-        "description": "Get the 10 unshipped orders with the highest value",
-        "params": ["segment", "date"],
-        "template": """
--- TPC-H Query 3: Shipping Priority
--- This query retrieves the 10 unshipped orders with the highest value.
-
-SELECT
-    l_orderkey,
-    SUM(l_extendedprice * (1 - l_discount)) AS revenue,
-    o_orderdate,
-    o_shippriority
-FROM
-    customer,
-    orders,
-    lineitem
-WHERE
-    c_mktsegment = '{segment}'
-    AND c_custkey = o_custkey
-    AND l_orderkey = o_orderkey
-    AND o_orderdate < DATE '{date}'
-    AND l_shipdate > DATE '{date}'
-GROUP BY
-    l_orderkey,
-    o_orderdate,
-    o_shippriority
-ORDER BY
-    revenue DESC,
-    o_orderdate
-LIMIT 10;
-"""
+        "params": {
+            1: {"type": "segment", "values": ["AUTOMOBILE", "BUILDING", "FURNITURE", "HOUSEHOLD", "MACHINERY"]},
+            2: {"type": "date", "min": 1, "max": 31}  # Days in March 1995
+        }
     },
     4: {
         "name": "Order Priority Checking",
-        "description": "Count orders by priority in a given time period",
-        "params": ["date"],
-        "template": """
--- TPC-H Query 4: Order Priority Checking
--- This query counts the number of orders ordered in a given quarter of a given year
--- in which at least one lineitem was received by the customer later than its committed date.
-
-SELECT
-    o_orderpriority,
-    COUNT(*) AS order_count
-FROM orders
-WHERE
-    o_orderdate >= DATE '{date}'
-    AND o_orderdate < DATE '{date}' + INTERVAL '3' MONTH
-    AND EXISTS (
-        SELECT *
-        FROM lineitem
-        WHERE
-            l_orderkey = o_orderkey
-            AND l_commitdate < l_receiptdate
-    )
-GROUP BY o_orderpriority
-ORDER BY o_orderpriority;
-"""
+        "params": {
+            1: {"type": "date_quarter", "quarters": [
+                "1993-01-01", "1993-04-01", "1993-07-01", "1993-10-01",
+                "1994-01-01", "1994-04-01", "1994-07-01", "1994-10-01",
+                "1995-01-01", "1995-04-01", "1995-07-01", "1995-10-01",
+                "1996-01-01", "1996-04-01", "1996-07-01", "1996-10-01",
+                "1997-01-01", "1997-04-01", "1997-07-01", "1997-10-01"
+            ]}
+        }
     },
     5: {
         "name": "Local Supplier Volume",
-        "description": "List revenue volume done through local suppliers",
-        "params": ["region", "date"],
-        "template": """
--- TPC-H Query 5: Local Supplier Volume
--- This query lists the revenue volume done through local suppliers.
-
-SELECT
-    n_name,
-    SUM(l_extendedprice * (1 - l_discount)) AS revenue
-FROM
-    customer,
-    orders,
-    lineitem,
-    supplier,
-    nation,
-    region
-WHERE
-    c_custkey = o_custkey
-    AND l_orderkey = o_orderkey
-    AND l_suppkey = s_suppkey
-    AND c_nationkey = s_nationkey
-    AND s_nationkey = n_nationkey
-    AND n_regionkey = r_regionkey
-    AND r_name = '{region}'
-    AND o_orderdate >= DATE '{date}'
-    AND o_orderdate < DATE '{date}' + INTERVAL '1' YEAR
-GROUP BY n_name
-ORDER BY revenue DESC;
-"""
+        "params": {
+            1: {"type": "region", "values": ["AFRICA", "AMERICA", "ASIA", "EUROPE", "MIDDLE EAST"]},
+            2: {"type": "year", "values": ["1993", "1994", "1995", "1996", "1997"]}
+        }
     },
-    # Add more queries... (continuing with abbreviated versions for space)
     6: {
         "name": "Forecasting Revenue Change",
-        "description": "Quantify revenue increase from eliminating discounts on a subset of orders",
-        "params": ["date", "discount", "quantity"],
-        "template": """
--- TPC-H Query 6: Forecasting Revenue Change
-SELECT SUM(l_extendedprice * l_discount) AS revenue
-FROM lineitem
-WHERE
-    l_shipdate >= DATE '{date}'
-    AND l_shipdate < DATE '{date}' + INTERVAL '1' YEAR
-    AND l_discount BETWEEN {discount} - 0.01 AND {discount} + 0.01
-    AND l_quantity < {quantity};
-"""
+        "params": {
+            1: {"type": "year", "values": ["1993", "1994", "1995", "1996", "1997"]},
+            2: {"type": "discount", "min": 0.02, "max": 0.09, "precision": 2},
+            3: {"type": "quantity", "min": 24, "max": 25}
+        }
+    },
+    7: {
+        "name": "Volume Shipping",
+        "params": {
+            1: {"type": "nation", "values": ["ALGERIA", "ARGENTINA", "BRAZIL", "CANADA", "EGYPT", "ETHIOPIA", "FRANCE", "GERMANY", "INDIA", "INDONESIA", "IRAN", "IRAQ", "JAPAN", "JORDAN", "KENYA", "MOROCCO", "MOZAMBIQUE", "PERU", "CHINA", "ROMANIA", "SAUDI ARABIA", "VIETNAM", "RUSSIA", "UNITED KINGDOM", "UNITED STATES"]},
+            2: {"type": "nation", "values": ["ALGERIA", "ARGENTINA", "BRAZIL", "CANADA", "EGYPT", "ETHIOPIA", "FRANCE", "GERMANY", "INDIA", "INDONESIA", "IRAN", "IRAQ", "JAPAN", "JORDAN", "KENYA", "MOROCCO", "MOZAMBIQUE", "PERU", "CHINA", "ROMANIA", "SAUDI ARABIA", "VIETNAM", "RUSSIA", "UNITED KINGDOM", "UNITED STATES"]}
+        }
+    },
+    8: {
+        "name": "National Market Share",
+        "params": {
+            1: {"type": "nation", "values": ["ALGERIA", "ARGENTINA", "BRAZIL", "CANADA", "EGYPT", "ETHIOPIA", "FRANCE", "GERMANY", "INDIA", "INDONESIA", "IRAN", "IRAQ", "JAPAN", "JORDAN", "KENYA", "MOROCCO", "MOZAMBIQUE", "PERU", "CHINA", "ROMANIA", "SAUDI ARABIA", "VIETNAM", "RUSSIA", "UNITED KINGDOM", "UNITED STATES"]},
+            2: {"type": "region", "values": ["AFRICA", "AMERICA", "ASIA", "EUROPE", "MIDDLE EAST"]},
+            3: {"type": "type", "values": ["BRASS", "COPPER", "NICKEL", "STEEL", "TIN"]}
+        }
+    },
+    9: {
+        "name": "Product Type Profit Measure",
+        "params": {
+            1: {"type": "color", "values": ["almond", "antique", "aquamarine", "azure", "beige", "bisque", "black", "blanched", "blue", "blush", "brown", "burlywood", "burnished", "chartreuse", "chiffon", "chocolate", "coral", "cornflower", "cornsilk", "cream", "cyan", "dark", "deep", "dim", "dodger", "drab", "firebrick", "floral", "forest", "frosted", "gainsboro", "ghost", "goldenrod", "green", "grey", "honeydew", "hot", "indian", "ivory", "khaki", "lace", "lavender", "lawn", "lemon", "light", "lime", "linen", "magenta", "maroon", "medium", "metallic", "midnight", "mint", "misty", "moccasin", "navajo", "navy", "olive", "orange", "orchid", "pale", "papaya", "peach", "peru", "pink", "plum", "powder", "puff", "purple", "red", "rose", "rosy", "royal", "saddle", "salmon", "sandy", "seashell", "sienna", "sky", "slate", "smoke", "snow", "spring", "steel", "tan", "thistle", "tomato", "turquoise", "violet", "wheat", "white", "yellow"]}
+        }
+    },
+    10: {
+        "name": "Returned Item Reporting",
+        "params": {
+            1: {"type": "date_month", "months": [
+                "1993-01-01", "1993-02-01", "1993-03-01", "1993-04-01", "1993-05-01", "1993-06-01",
+                "1993-07-01", "1993-08-01", "1993-09-01", "1993-10-01", "1993-11-01", "1993-12-01",
+                "1994-01-01", "1994-02-01", "1994-03-01", "1994-04-01", "1994-05-01", "1994-06-01",
+                "1994-07-01", "1994-08-01", "1994-09-01", "1994-10-01", "1994-11-01", "1994-12-01",
+                "1995-01-01", "1995-02-01", "1995-03-01", "1995-04-01", "1995-05-01", "1995-06-01",
+                "1995-07-01", "1995-08-01", "1995-09-01", "1995-10-01", "1995-11-01", "1995-12-01"
+            ]}
+        }
+    },
+    11: {
+        "name": "Important Stock Identification",
+        "params": {
+            1: {"type": "nation", "values": ["ALGERIA", "ARGENTINA", "BRAZIL", "CANADA", "EGYPT", "ETHIOPIA", "FRANCE", "GERMANY", "INDIA", "INDONESIA", "IRAN", "IRAQ", "JAPAN", "JORDAN", "KENYA", "MOROCCO", "MOZAMBIQUE", "PERU", "CHINA", "ROMANIA", "SAUDI ARABIA", "VIETNAM", "RUSSIA", "UNITED KINGDOM", "UNITED STATES"]},
+            2: {"type": "fraction", "value": 0.0001}
+        }
+    },
+    12: {
+        "name": "Shipping Modes and Order Priority",
+        "params": {
+            1: {"type": "shipmode", "values": ["MAIL", "SHIP"]},
+            2: {"type": "shipmode", "values": ["AIR", "AIR REG", "FOB", "RAIL", "REG AIR", "TRUCK"]},
+            3: {"type": "year", "values": ["1993", "1994", "1995", "1996", "1997"]}
+        }
+    },
+    13: {
+        "name": "Customer Distribution",
+        "params": {
+            1: {"type": "word1", "values": ["special", "pending", "unusual", "express"]},
+            2: {"type": "word2", "values": ["packages", "requests", "accounts", "deposits"]}
+        }
+    },
+    14: {
+        "name": "Promotion Effect",
+        "params": {
+            1: {"type": "date_month", "months": [
+                "1993-01-01", "1994-01-01", "1995-01-01", "1996-01-01", "1997-01-01"
+            ]}
+        }
+    },
+    15: {
+        "name": "Top Supplier",
+        "params": {
+            1: {"type": "date_quarter", "quarters": [
+                "1996-01-01", "1996-04-01", "1996-07-01", "1996-10-01"
+            ]}
+        }
+    },
+    16: {
+        "name": "Parts/Supplier Relationship",
+        "params": {
+            1: {"type": "brand", "min": 1, "max": 5},
+            2: {"type": "type", "values": ["BRASS", "COPPER", "NICKEL", "STEEL", "TIN"]},
+            3: {"type": "size_list", "sizes": [3, 9, 14, 19, 23, 36, 45, 49]}
+        }
+    },
+    17: {
+        "name": "Small-Quantity-Order Revenue",
+        "params": {
+            1: {"type": "brand", "min": 1, "max": 5},
+            2: {"type": "container", "values": ["SM CASE", "SM BOX", "SM PACK", "SM PKG"]}
+        }
+    },
+    18: {
+        "name": "Large Volume Customer",
+        "params": {
+            1: {"type": "quantity", "min": 312, "max": 315}
+        }
+    },
+    19: {
+        "name": "Discounted Revenue",
+        "params": {
+            1: {"type": "quantity1", "min": 1, "max": 10},
+            2: {"type": "quantity2", "min": 10, "max": 20},
+            3: {"type": "quantity3", "min": 20, "max": 30},
+            4: {"type": "brand1", "min": 1, "max": 5},
+            5: {"type": "brand2", "min": 1, "max": 5},
+            6: {"type": "brand3", "min": 1, "max": 5}
+        }
+    },
+    20: {
+        "name": "Potential Part Promotion",
+        "params": {
+            1: {"type": "color", "values": ["almond", "antique", "aquamarine", "azure", "beige", "bisque", "black", "blanched", "blue", "blush", "brown", "burlywood", "burnished", "chartreuse", "chiffon", "chocolate", "coral", "cornflower", "cornsilk", "cream", "cyan", "dark", "deep", "dim", "dodger", "drab", "firebrick", "floral", "forest", "frosted", "gainsboro", "ghost", "goldenrod", "green", "grey", "honeydew", "hot", "indian", "ivory", "khaki", "lace", "lavender", "lawn", "lemon", "light", "lime", "linen", "magenta", "maroon", "medium", "metallic", "midnight", "mint", "misty", "moccasin", "navajo", "navy", "olive", "orange", "orchid", "pale", "papaya", "peach", "peru", "pink", "plum", "powder", "puff", "purple", "red", "rose", "rosy", "royal", "saddle", "salmon", "sandy", "seashell", "sienna", "sky", "slate", "smoke", "snow", "spring", "steel", "tan", "thistle", "tomato", "turquoise", "violet", "wheat", "white", "yellow"]},
+            2: {"type": "date_year", "values": ["1993-01-01", "1994-01-01", "1995-01-01", "1996-01-01", "1997-01-01"]},
+            3: {"type": "nation", "values": ["ALGERIA", "ARGENTINA", "BRAZIL", "CANADA", "EGYPT", "ETHIOPIA", "FRANCE", "GERMANY", "INDIA", "INDONESIA", "IRAN", "IRAQ", "JAPAN", "JORDAN", "KENYA", "MOROCCO", "MOZAMBIQUE", "PERU", "CHINA", "ROMANIA", "SAUDI ARABIA", "VIETNAM", "RUSSIA", "UNITED KINGDOM", "UNITED STATES"]}
+        }
+    },
+    21: {
+        "name": "Suppliers Who Kept Orders Waiting",
+        "params": {
+            1: {"type": "nation", "values": ["ALGERIA", "ARGENTINA", "BRAZIL", "CANADA", "EGYPT", "ETHIOPIA", "FRANCE", "GERMANY", "INDIA", "INDONESIA", "IRAN", "IRAQ", "JAPAN", "JORDAN", "KENYA", "MOROCCO", "MOZAMBIQUE", "PERU", "CHINA", "ROMANIA", "SAUDI ARABIA", "VIETNAM", "RUSSIA", "UNITED KINGDOM", "UNITED STATES"]}
+        }
+    },
+    22: {
+        "name": "Global Sales Opportunity",
+        "params": {
+            1: {"type": "country_code", "values": ["13", "31", "23", "29", "30", "18", "17"]},
+            2: {"type": "country_code", "values": ["13", "31", "23", "29", "30", "18", "17"]},
+            3: {"type": "country_code", "values": ["13", "31", "23", "29", "30", "18", "17"]},
+            4: {"type": "country_code", "values": ["13", "31", "23", "29", "30", "18", "17"]},
+            5: {"type": "country_code", "values": ["13", "31", "23", "29", "30", "18", "17"]},
+            6: {"type": "country_code", "values": ["13", "31", "23", "29", "30", "18", "17"]},
+            7: {"type": "country_code", "values": ["13", "31", "23", "29", "30", "18", "17"]}
+        }
     }
-    # Note: Adding all 22 queries would make this file very long, so I'll include the framework
-    # and a few examples. The full implementation can be extended.
 }
 
-# Parameter generation functions
-def generate_random_params(query_num: int, seed: Optional[int] = None) -> Dict[str, str]:
-    """Generate random parameters for a given TPC-H query."""
-    if seed:
-        random.seed(seed)
+def generate_parameter_value(param_def: Dict[str, Any], random_gen: random.Random) -> str:
+    """Generate a parameter value based on its definition."""
+    param_type = param_def["type"]
     
-    # Base date for relative date calculations
-    base_date = datetime(1992, 1, 1)
+    if "values" in param_def:
+        return random_gen.choice(param_def["values"])
+    elif "min" in param_def and "max" in param_def:
+        if param_type == "discount":
+            value = random_gen.uniform(param_def["min"], param_def["max"])
+            return f"{value:.{param_def.get('precision', 2)}f}"
+        elif param_type in ["quantity", "size", "brand", "quantity1", "quantity2", "quantity3", "brand1", "brand2", "brand3"]:
+            return str(random_gen.randint(param_def["min"], param_def["max"]))
+        elif param_type == "days":
+            # For Q1: days back from 1998-12-01
+            days_back = random_gen.randint(param_def["min"], param_def["max"])
+            return str(days_back)
+        elif param_type == "date":
+            # For Q3: days in March 1995
+            day = random_gen.randint(param_def["min"], param_def["max"])
+            return f"1995-03-{day:02d}"
+    elif param_type == "fraction":
+        return str(param_def["value"])
+    elif param_type == "date_quarter":
+        return random_gen.choice(param_def["quarters"])
+    elif param_type == "date_month":
+        return random_gen.choice(param_def["months"])
+    elif param_type == "date_year":
+        return random_gen.choice(param_def["values"])
+    elif param_type == "year":
+        return random_gen.choice(param_def["values"])
+    elif param_type == "size_list":
+        # Select random subset of sizes
+        subset_size = random_gen.randint(3, min(8, len(param_def["sizes"])))
+        selected = random_gen.sample(param_def["sizes"], subset_size)
+        return ", ".join(map(str, sorted(selected)))
     
-    param_generators = {
-        "delta": lambda: (base_date + timedelta(days=random.randint(60, 120))).strftime('%Y-%m-%d'),
-        "size": lambda: random.choice([1, 2, 3, 4, 5, 10, 14, 15, 16, 17, 18, 19, 20, 25, 30, 35, 40, 45, 49, 50]),
-        "type": lambda: random.choice(["BRASS", "COPPER", "NICKEL", "STEEL", "TIN"]),
-        "region": lambda: random.choice(["AFRICA", "AMERICA", "ASIA", "EUROPE", "MIDDLE EAST"]),
-        "segment": lambda: random.choice(["AUTOMOBILE", "BUILDING", "FURNITURE", "HOUSEHOLD", "MACHINERY"]),
-        "date": lambda: (base_date + timedelta(days=random.randint(1, 2557))).strftime('%Y-%m-%d'),
-        "discount": lambda: round(random.uniform(0.02, 0.09), 2),
-        "quantity": lambda: random.randint(24, 25),
-    }
-    
-    if query_num not in TPCH_QUERIES:
-        return {}
-    
-    params = {}
-    for param_name in TPCH_QUERIES[query_num]["params"]:
-        if param_name in param_generators:
-            params[param_name] = param_generators[param_name]()
-    
-    return params
+    return ""
 
-def format_query_for_sql(query: str) -> str:
-    """Format query for standard SQL (no modifications needed)."""
-    return query
+def substitute_template(template_content: str, query_num: int, seed: int) -> str:
+    """Substitute parameters in a TPC-H query template."""
+    if query_num not in TPCH_PARAMETERS:
+        raise ValueError(f"Query {query_num} not supported")
+    
+    # Create seeded random generator for reproducible results
+    random_gen = random.Random(seed)
+    
+    # Generate parameter values
+    param_values = {}
+    query_def = TPCH_PARAMETERS[query_num]
+    
+    for param_num, param_def in query_def["params"].items():
+        param_values[param_num] = generate_parameter_value(param_def, random_gen)
+    
+    # Remove qgen directives and substitute parameters
+    lines = template_content.split('\n')
+    result_lines = []
+    
+    for line in lines:
+        # Skip qgen directive lines that are standalone
+        if re.match(r'^\s*:[xobn]\s*$', line):
+            continue
+        if re.match(r'^\s*:n\s+-?\d+\s*$', line):
+            continue
+        
+        # Process the line for parameter substitution
+        modified_line = line
+        
+        # Substitute numbered parameters (:1, :2, etc.)
+        for param_num, value in param_values.items():
+            pattern = f':{param_num}'
+            if pattern in modified_line:
+                modified_line = modified_line.replace(pattern, str(value))
+        
+        # Handle special directives that appear inline
+        # :s (stream number) - replace with 0 for simplicity
+        modified_line = re.sub(r':s\b', '0', modified_line)
+        
+        # :q (query number) - replace with actual query number
+        modified_line = re.sub(r':q\b', str(query_num), modified_line)
+        
+        result_lines.append(modified_line)
+    
+    # Join lines and clean up
+    result = '\n'.join(result_lines)
+    
+    return result.strip()
 
-def generate_query(query_num: int, params: Optional[Dict[str, str]] = None) -> str:
-    """Generate a specific TPC-H query with parameters."""
-    if query_num not in TPCH_QUERIES:
-        raise ValueError(f"Query {query_num} not implemented. Available: {list(TPCH_QUERIES.keys())}")
+def get_template_dir():
+    """Get the directory containing query templates."""
+    script_dir = Path(__file__).parent.absolute()
+    project_root = script_dir.parent
     
-    query_info = TPCH_QUERIES[query_num]
+    template_dir = project_root / "templates"
+    if template_dir.exists() and (template_dir / "1.sql").exists():
+        return str(template_dir)
     
-    # Generate random parameters if not provided
-    if params is None:
-        params = generate_random_params(query_num)
-    
-    # Substitute parameters in template
-    query = query_info["template"].format(**params)
-    
-    # Format for standard SQL
-    query = format_query_for_sql(query)
-    
-    return query.strip()
+    return None
 
-def generate_query_suite(output_dir: str, num_streams: int = 1, seed: Optional[int] = None) -> None:
-    """Generate complete TPC-H query suite."""
+def generate_queries(output_dir: str, seed: int = 1):
+    """Generate all 22 TPC-H queries."""
+    template_dir = get_template_dir()
+    if not template_dir:
+        print("Error: Query templates not found in templates/ directory")
+        return False
+    
     os.makedirs(output_dir, exist_ok=True)
     
-    # Generate metadata file
-    metadata = {
-        "generated_at": datetime.now().isoformat(),
-        "engine": "sql",
-        "num_streams": num_streams,
-        "seed": seed,
-        "queries": {}
-    }
+    # Generate all 22 queries
+    for query_num in range(1, 23):
+        template_file = os.path.join(template_dir, f"{query_num}.sql")
+        output_file = os.path.join(output_dir, f"q{query_num:02d}.sql")
+        
+        if not os.path.exists(template_file):
+            print(f"Warning: Template {template_file} not found, skipping query {query_num}")
+            continue
+        
+        try:
+            # Read template
+            with open(template_file, 'r') as f:
+                template_content = f.read()
+            
+            # Generate query with different seed for each query for variety
+            query_seed = seed + query_num - 1
+            substituted_query = substitute_template(template_content, query_num, query_seed)
+            
+            # Write output
+            with open(output_file, 'w') as f:
+                f.write(f"-- TPC-H Query {query_num}: {TPCH_PARAMETERS[query_num]['name']}\n")
+                f.write(f"-- Generated with seed: {query_seed}\n\n")
+                f.write(substituted_query)
+                f.write('\n')
+            
+            print(f"Generated q{query_num:02d}.sql")
+            
+        except Exception as e:
+            print(f"Error generating query {query_num}: {e}")
+            return False
     
-    # Generate queries for each stream
-    for stream in range(1, num_streams + 1):
-        stream_dir = os.path.join(output_dir, f"stream_{stream}")
-        os.makedirs(stream_dir, exist_ok=True)
-        
-        stream_metadata = {"queries": {}}
-        
-        for query_num in TPCH_QUERIES.keys():
-            # Generate parameters (with seed for reproducibility)
-            query_seed = seed + stream * 100 + query_num if seed else None
-            params = generate_random_params(query_num, query_seed)
-            
-            # Generate query
-            query_sql = generate_query(query_num, params)
-            
-            # Write query file
-            query_filename = f"q{query_num:02d}.sql"
-            query_path = os.path.join(stream_dir, query_filename)
-            
-            with open(query_path, 'w') as f:
-                f.write(f"-- TPC-H Query {query_num}: {TPCH_QUERIES[query_num]['name']}\n")
-                f.write(f"-- {TPCH_QUERIES[query_num]['description']}\n")
-                f.write(f"-- Parameters: {params}\n")
-                f.write(f"-- Generated for: SQL\n")
-                f.write(f"-- Stream: {stream}\n\n")
-                f.write(query_sql)
-                f.write("\n")
-            
-            # Save metadata
-            stream_metadata["queries"][query_num] = {
-                "name": TPCH_QUERIES[query_num]["name"],
-                "description": TPCH_QUERIES[query_num]["description"],
-                "params": params,
-                "filename": query_filename
-            }
-        
-        # Write stream metadata
-        with open(os.path.join(stream_dir, "metadata.yaml"), 'w') as f:
-            yaml.dump(stream_metadata, f, default_flow_style=False)
-        
-        metadata["queries"][f"stream_{stream}"] = stream_metadata
+    print(f"Generated 22 TPC-H queries in: {output_dir}")
+    return True
+
+def generate_single_query(query_num: int, seed: int = 1):
+    """Generate a single query and print to stdout."""
+    template_dir = get_template_dir()
+    if not template_dir:
+        print("Error: Query templates not found in templates/ directory")
+        return False
     
-    # Write overall metadata
-    with open(os.path.join(output_dir, "metadata.yaml"), 'w') as f:
-        yaml.dump(metadata, f, default_flow_style=False)
+    template_file = os.path.join(template_dir, f"{query_num}.sql")
     
-    print(f"Generated TPC-H query suite in: {output_dir}")
-    print(f"Engine: SQL")
-    print(f"Streams: {num_streams}")
-    print(f"Queries per stream: {len(TPCH_QUERIES)}")
+    if not os.path.exists(template_file):
+        print(f"Error: Template {template_file} not found")
+        return False
+    
+    try:
+        # Read template
+        with open(template_file, 'r') as f:
+            template_content = f.read()
+        
+        # Generate query
+        substituted_query = substitute_template(template_content, query_num, seed)
+        
+        # Print to stdout
+        print(substituted_query)
+        return True
+        
+    except Exception as e:
+        print(f"Error generating query {query_num}: {e}")
+        return False
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate TPC-H benchmark queries")
+    parser = argparse.ArgumentParser(description="Generate TPC-H benchmark queries with parameter substitution")
     parser.add_argument("output_dir", help="Output directory for generated queries")
-    parser.add_argument("--streams", type=int, default=1,
-                       help="Number of query streams to generate (default: 1)")
-    parser.add_argument("--seed", type=int,
-                       help="Random seed for reproducible parameter generation")
-    parser.add_argument("--query", type=int, choices=list(TPCH_QUERIES.keys()),
-                       help="Generate single query number instead of full suite")
+    parser.add_argument("--seed", type=int, default=1, help="Random seed for parameter generation")
+    parser.add_argument("--query", type=int, choices=range(1, 23), metavar="1-22",
+                       help="Generate single query instead of full suite")
     
     args = parser.parse_args()
     
     if args.query:
         # Generate single query
-        params = generate_random_params(args.query, args.seed)
-        query = generate_query(args.query, params)
-        
-        print(f"-- TPC-H Query {args.query}: {TPCH_QUERIES[args.query]['name']}")
-        print(f"-- Parameters: {params}")
-        print(query)
+        success = generate_single_query(args.query, args.seed)
     else:
-        # Generate full query suite
-        generate_query_suite(
-            args.output_dir, 
-            args.streams, 
-            args.seed
-        )
+        # Generate all queries
+        success = generate_queries(args.output_dir, args.seed)
+    
+    exit(0 if success else 1)
 
 if __name__ == "__main__":
     main()

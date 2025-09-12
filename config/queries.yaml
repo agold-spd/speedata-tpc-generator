@@ -1,0 +1,40 @@
+# TPC-H Query Generation Configuration
+
+# Default parameters for query generation
+query_config:
+  # Random seed for reproducible parameter generation
+  # If null, parameters will be truly random each run
+  seed: 12345
+  
+  # Number of query streams to generate
+  # Multiple streams allow parallel benchmark execution
+  streams: 1
+  
+  # Base date for TPC-H temporal queries (YYYY-MM-DD)
+  # TPC-H spec uses dates between 1992-01-01 and 1998-12-31
+  base_date: "1992-01-01"
+
+# Parameter constraints (following TPC-H specification)
+parameters:
+  # Date range constraints
+  date_range:
+    start: "1992-01-01" 
+    end: "1998-12-31"
+  
+  # Numeric parameter ranges
+  size_range: [1, 50]
+  discount_range: [0.02, 0.09]
+  quantity_range: [24, 25]
+  
+  # Categorical parameters
+  regions: ["AFRICA", "AMERICA", "ASIA", "EUROPE", "MIDDLE EAST"]
+  segments: ["AUTOMOBILE", "BUILDING", "FURNITURE", "HOUSEHOLD", "MACHINERY"]
+  part_types: ["BRASS", "COPPER", "NICKEL", "STEEL", "TIN"]
+  
+  # Nations for multi-nation queries
+  nations: [
+    "ALGERIA", "ARGENTINA", "BRAZIL", "CANADA", "EGYPT", "ETHIOPIA", 
+    "FRANCE", "GERMANY", "INDIA", "INDONESIA", "IRAN", "IRAQ", "JAPAN", 
+    "JORDAN", "KENYA", "MOROCCO", "MOZAMBIQUE", "PERU", "CHINA", "ROMANIA", 
+    "SAUDI ARABIA", "VIETNAM", "RUSSIA", "UNITED KINGDOM", "UNITED STATES"
+  ]

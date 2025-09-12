@@ -4,14 +4,14 @@ A tool to generate TPC-H benchmark data at configurable scale in Parquet format.
 
 ## Overview
 
-This project creates TPC-H benchmark datasets using the `tpchgen-cli` tool. It generates data in Parquet format with automatic data type optimization and optional dictionary encoding control. The default scale factor is 1000 (approximately 1TB), but this can be adjusted.
+This project creates TPC-H benchmark datasets using the tpchgen-cli tool. It generates data in Parquet format with automatic data type optimization and optional dictionary encoding control. The default scale factor is 1000 which creates approximately 1TB of data, but this can be adjusted.
 
 ## Requirements
 
 - Python 3.7 or higher
 - Java 8 or higher (required by PySpark)
-- `tpchgen-cli` command line tool
-- Sufficient disk space (varies by scale factor: ~1GB for SF 1, ~1TB for SF 1000)
+- tpchgen-cli command line tool
+- Sufficient disk space (varies by scale factor: approximately 1GB for SF 1, approximately 1TB for SF 1000)
 
 ## Installation
 
@@ -27,12 +27,12 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Make sure the `tpchgen-cli` command is available in your system PATH after installation.
+Make sure the tpchgen-cli command is available in your system PATH after installation.
 
 The requirements file includes:
-- `tpchgen-cli` - the core TPC-H data generator
-- `pyyaml` - for reading configuration files
-- `pyspark` - for data type optimization and Parquet rewriting
+- tpchgen-cli - the core TPC-H data generator
+- pyyaml - for reading configuration files
+- pyspark - for data type optimization and Parquet rewriting
 
 ## Usage
 
@@ -69,8 +69,8 @@ python scripts/generate_tpch.py /path/to/output --tables lineitem --scale 1
 
 This command will:
 - Generate all TPC-H tables at scale factor 1000 (1TB total size) by default
-- Use partition configurations from `config/partitions.yaml`
-- Create separate directories for each table under `/path/to/output/`
+- Use partition configurations from config/partitions.yaml
+- Create separate directories for each table under the specified output path
 - Save data in Parquet format
 - Automatically optimize data types and apply chosen compression
 
@@ -97,31 +97,31 @@ python scripts/generate_tpch.py /path/to/output --no-dict --compression UNCOMPRE
 **Available compression options**: SNAPPY (default), GZIP, UNCOMPRESSED
 
 The script will always:
-1. First generate the data using `tpchgen-cli`
+1. First generate the data using tpchgen-cli
 2. Then automatically rewrite the files using Apache Spark with data type optimization
-3. Apply dictionary encoding based on the `--no-dict` flag (enabled by default)
+3. Apply dictionary encoding based on the --no-dict flag (enabled by default)
 4. Apply the chosen compression codec during rewrite
-5. Use Spark's intelligent auto-partitioning for optimal performance
+5. Use Spark intelligent auto-partitioning for optimal performance
 6. Replace the original files with optimized versions (saves disk space)
 
 **Data Type Optimizations Applied:**
-- Convert `DecimalType(38,0)` columns to appropriate integer types based on TPC-H spec (`IntegerType` or `LongType`)
-- Special handling for `partsupp` table with optimized decimal precision
+- Convert DecimalType(38,0) columns to appropriate integer types based on TPC-H spec (IntegerType or LongType)
+- Special handling for partsupp table with optimized decimal precision
 - Improved query performance and reduced storage footprint
 
 ## Configuration
 
 The project uses separate configuration files for different aspects:
 
-- `config/partitions.yaml` - controls how many files tpchgen-cli generates per table (optimized for 1TB)
-- `config/spark.yaml` - Spark performance settings for the optimization phase  
-- `requirements.txt` - Python dependencies
+- config/partitions.yaml - controls how many files tpchgen-cli generates per table (optimized for 1TB)
+- config/spark.yaml - Spark performance settings for the optimization phase  
+- requirements.txt - Python dependencies
 
 **Note:** Partition counts only affect initial file generation. Spark uses auto-partitioning during optimization.
 
 ### Spark Performance Tuning
 
-Spark settings are in `config/spark.yaml`, organized by category for easy customization:
+Spark settings are in config/spark.yaml, organized by category for easy customization:
 
 #### Quick Setup Examples:
 
@@ -172,6 +172,52 @@ After running the generator, your output directory will contain:
 
 Each directory contains Parquet files for the corresponding TPC-H table.
 
+### Generate TPC-H Queries
+
+In addition to data generation, this project includes a comprehensive TPC-H query generator that creates the standard 22 benchmark queries with proper parameter substitution:
+
+```bash
+# Generate all 22 TPC-H queries in standard SQL format
+python scripts/generate_tpch_queries.py /path/to/queries
+
+# Generate multiple query streams for parallel execution
+python scripts/generate_tpch_queries.py /path/to/queries --streams 4
+
+# Generate a single query with random parameters
+python scripts/generate_tpch_queries.py /path/to/queries --query 1
+
+# Generate queries with a specific seed for reproducibility
+python scripts/generate_tpch_queries.py /path/to/queries --seed 12345
+```
+
+The query generator includes:
+- All 22 standard TPC-H queries with proper parameter substitution
+- Standard SQL format compatible with most databases
+- Configurable random parameter generation with seeds for reproducibility
+- Multiple query streams for parallel benchmark execution
+- Metadata files with query parameters and execution information
+
+**Query Output Structure:**
+```
+/path/to/queries/
+├── metadata.yaml
+├── stream_1/
+│   ├── q01.sql
+│   ├── q02.sql
+│   ├── ...
+│   ├── q22.sql
+│   └── metadata.yaml
+└── stream_2/ (if --streams > 1)
+    ├── q01.sql
+    └── ...
+```
+
+Each query file includes:
+- Query name and description
+- Generated parameters used
+- Standard SQL format
+- Complete executable SQL
+
 ## About TPC-H
 
 TPC-H is a decision support benchmark that consists of business-oriented queries and concurrent data modifications. The benchmark provides a representative evaluation of performance for decision support systems that examine large volumes of data and execute complex queries.
@@ -181,8 +227,8 @@ TPC-H is a decision support benchmark that consists of business-oriented queries
 ### Common Issues
 
 1. **Command not found: tpchgen-cli**
-   - Ensure `tpchgen-cli` is installed and in your PATH
-   - Try reinstalling with `pip install --upgrade tpchgen-cli`
+   - Ensure tpchgen-cli is installed and in your PATH
+   - Try reinstalling with: pip install --upgrade tpchgen-cli
 
 2. **Out of disk space**
    - The complete dataset requires approximately 1TB of storage
@@ -190,11 +236,11 @@ TPC-H is a decision support benchmark that consists of business-oriented queries
 
 3. **Memory errors during Spark optimization**
    - The Spark optimization process requires adequate memory
-   - Adjust memory settings in `config/spark.yaml` based on your system
-   - Reduce `driver_memory` and `executor_memory` for systems with less RAM
+   - Adjust memory settings in config/spark.yaml based on your system
+   - Reduce driver_memory and executor_memory for systems with less RAM
 
 4. **PySpark import errors**
-   - Ensure PySpark is installed: `pip install pyspark`
+   - Ensure PySpark is installed: pip install pyspark
    - Check that Java 8+ is installed and available
 
 ## License

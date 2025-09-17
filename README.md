@@ -15,13 +15,14 @@ This project provides a complete TPC-H benchmark environment generator with two 
 - **TPC-H compliant** - Follows official specification for parameter generation
 - **Optimized output** - Parquet format with compression and partitioning
 - **Reproducible** - Seed-based parameter generation for consistent results
+- **Modern Spark** - Uses Apache Spark 3.5.0 with JDK 17 for enhanced performance
 
 ## Prerequisites
 
 Before using this toolkit, ensure you have the following installed:
 
-- **Python 3.7 or higher** - Required for all scripts
-- **Java 8 or higher** - Required for PySpark data generation
+- **Python 3.8 or higher** - Required for all scripts and PySpark 3.5.0 compatibility
+- **Java 17 (JDK 17)** - Required for PySpark 3.5.0 data generation
 - **Git** - For cloning this repository
 
 ## Installation
@@ -37,21 +38,24 @@ cd speedata-tpc-generator
 pip install -r requirements.txt
 ```
 This will install:
-- `pyspark` - For distributed data processing
+- `pyspark==3.5.0` - Apache Spark 3.5.0 for distributed data processing
 - `tpchgen-cli` - For generating raw TPC-H data
 - `pyyaml` - For configuration file parsing
 
 ### Step 3: Verify Installation
 Check that all required tools are available:
 ```bash
-# Verify Python version
+# Verify Python version (should be 3.8 or higher)
 python3 --version
 
-# Verify Java installation
+# Verify Java installation (should be JDK 17)
 java -version
 
+# Verify PySpark version (should be 3.5.0)
+python3 -c "import pyspark; print(f'PySpark version: {pyspark.__version__}')"
+
 # Verify tpchgen-cli installation
-tpchgen --help
+tpchgen-cli --help
 ```
 
 ## Usage Guide
@@ -157,6 +161,9 @@ Each query file contains:
 
 ## Configuration
 
+### System Requirements
+This toolkit uses **Apache Spark 3.5.0** which requires **JDK 17** for optimal performance and compatibility. Spark 3.5.0 brings improved performance, better memory management, and enhanced compatibility with modern Java features.
+
 ### Spark Configuration (`config/spark.yaml`)
 Adjust Spark settings based on your system resources:
 ```yaml
@@ -248,19 +255,22 @@ python3 -m pip install tpchgen-cli
 ```bash
 java: command not found
 # or
-Java version is below 8
+Java version is below 17
 ```
 **Solution:**
 ```bash
 # On macOS with Homebrew
-brew install openjdk@11
+brew install openjdk@17
 
 # On Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install openjdk-11-jdk
+sudo apt-get install openjdk-17-jdk
 
-# On Windows - download from Oracle or use OpenJDK
-# Verify installation
+# On Windows - download OpenJDK 17 from:
+# https://adoptium.net/temurin/releases/
+# Or use the Microsoft Build of OpenJDK
+
+# Verify installation shows version 17
 java -version
 ```
 
